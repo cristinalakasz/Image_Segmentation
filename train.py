@@ -15,6 +15,7 @@ import segmentation_models
 HEIGHT = 256
 WIDTH = 256
 
+
 def generator_for_filenames(*filenames):
     """
     Wrapping a list of filenames as a generator function
@@ -94,7 +95,8 @@ def kitti_image_filenames(dataset_folder, training=True):
     sub_dataset = 'training' if training else 'testing'
     segmentation_names = glob.glob(os.path.join(dataset_folder, sub_dataset, 'gt_image_2', '*road*.png'),
                                    recursive=True)
-    image_names = [f.replace('gt_image_2', 'image_2').replace('_road_', '_') for f in segmentation_names]
+    image_names = [f.replace('gt_image_2', 'image_2').replace(
+        '_road_', '_') for f in segmentation_names]
     return image_names, segmentation_names
 
 
@@ -106,6 +108,7 @@ def vis_mask(image, mask, alpha=0.4):
     vis = tf.where(mask, alpha*image+(1-alpha)*red, image)
 
     return vis
+
 
 def get_train_data(subset_indices, batch_size):
 
@@ -122,6 +125,7 @@ def get_train_data(subset_indices, batch_size):
         batch_size=batch_size
     )
     return train_data
+
 
 def get_val_data(subset_indices, batch_size):
 
@@ -142,12 +146,15 @@ def get_val_data(subset_indices, batch_size):
 
 #############################  Loss and metric  ################################
 
+
 def get_loss_fn():
     loss_fn = losses.BinaryCrossentropy(from_logits=False)
     return loss_fn
 
-# Note that the functionality below we could have used the functionaliry of
+# Note that the functionality below we could have used the functionality of
 # metrics.BinaryAccuracy(threshold=0.5).
+
+
 def preds_evaluated(y_true, y_pred):
     """Evaluate all predicitions as correct or incorrect, where we choose the
     class label of the prediction to be 1 if the probability is 0.5 or higher.
@@ -175,10 +182,12 @@ def preds_evaluated(y_true, y_pred):
 
 ##################  Optimizer with learning rate schedule ######################
 
+
 def get_optimizer():
     # Just constant learning rate schedule
     optimizer = optimizers.Adam(lr=1e-4)
     return optimizer
+
 
 def main(train_dir):
 
@@ -194,8 +203,8 @@ def main(train_dir):
 
     train_data = get_train_data(indices[:272], train_batch_size)
     val_data = get_val_data(indices[272:], val_batch_size)
-    model = segmentation_models.simple_model((HEIGHT, WIDTH, 3))
-    #model = segmentation_models.unet((HEIGHT, WIDTH, 3))
+    #model = segmentation_models.simple_model((HEIGHT, WIDTH, 3))
+    model = segmentation_models.unet((HEIGHT, WIDTH, 3))
     loss_fn = get_loss_fn()
     metric_fn = preds_evaluated
     optimizer = get_optimizer()
@@ -217,8 +226,23 @@ def main(train_dir):
           float tensor of shape [batch_size, height, width, 1] with probabilties
         """
 
-        # TODO: Implement
-        y_pred = model(image) # TODO: Remove this line if you like
+        with tf.GradientTape() as tape:
+            # Find the predictions of the model for the batch of input images
+            y_pred = model(image, training=True)
+
+            # Calculate the loss of the predictions with respect to the ground truth
+            loss = loss_fn(y, y_pred)
+
+        # Find the gradients and update the model parameters using the optimizer
+        gradients = tape.gradient(loss, model.trainable_variables)
+        optimizer.apply_gradients(zip(gradients, model.trainable_variables))
+
+        # Update train loss variable with the loss
+        train_loss.update_state(loss)
+
+        # Evaluate the predictions against the ground truth with the metric fn and update train accuracy
+        accuracy = metric_fn(y, y_pred)
+        train_accuracy.update_state(accuracy)
 
         return y_pred
 
@@ -233,8 +257,18 @@ def main(train_dir):
           float tensor of shape [batch_size, height, width, 1] with probabilties
         """
 
-        # TODO: Implement
-        y_pred = model(image) # TODO: Remove this line if you like
+        # Find the predictions of the model for the batch of input images
+        y_pred = model(image, training=False)
+
+        # Calculate the loss of the predictions with respect to the ground truth
+        loss = loss_fn(y, y_pred)
+
+        # Update val_loss variable with the calculated loss value
+        val_loss.update_state(loss)
+
+        # Evaluate the predictions against the ground truth with the metric_fn and update val_accuracy
+        accuracy = metric_fn(y, y_pred)
+        val_accuracy.update_state(accuracy)
 
         return y_pred
 
@@ -264,7 +298,8 @@ def main(train_dir):
         # write summaries to TensorBoard
         with train_writer.as_default():
             tf.summary.scalar("loss", train_loss.result(), step=epoch+1)
-            tf.summary.scalar("accuracy", train_accuracy.result(), step=epoch+1)
+            tf.summary.scalar(
+                "accuracy", train_accuracy.result(), step=epoch+1)
             vis = vis_mask(image, y_pred >= 0.5)
             tf.summary.image("train_image", vis, step=epoch+1)
 
@@ -279,7 +314,8 @@ def main(train_dir):
             # Visualize all images in the validation set.
             with val_writer.as_default():
                 vis = vis_mask(image, y_pred >= 0.5)
-                tf.summary.image("val_image_batch_%d" % i, vis, step=epoch+1, max_outputs=val_batch_size)
+                tf.summary.image("val_image_batch_%d" % i, vis,
+                                 step=epoch+1, max_outputs=val_batch_size)
 
         with val_writer.as_default():
             tf.summary.scalar("loss", val_loss.result(), step=epoch+1)
@@ -292,16 +328,21 @@ def main(train_dir):
     # save a model which we can later load by tf.keras.models.load_model(model_path)
     model_path = os.path.join(train_dir, "model.h5")
     print("Saving model to '%s'." % model_path)
+    # Number of trainable parameters
+    model.summary()
+
     model.save(model_path)
 
 
 def parse_args():
-  """Parse command line argument."""
+    """Parse command line argument."""
 
-  parser = argparse.ArgumentParser("Train segmention model on Kitti dataset.")
-  parser.add_argument("train_dir", help="Directory to put logs and saved model.")
+    parser = argparse.ArgumentParser(
+        "Train segmention model on Kitti dataset.")
+    parser.add_argument(
+        "train_dir", help="Directory to put logs and saved model.")
 
-  return parser.parse_args()
+    return parser.parse_args()
 
 
 if __name__ == '__main__':
